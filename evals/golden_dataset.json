@@ -1,0 +1,351 @@
+{
+  "dataset_version": "1.0.0",
+  "description": "Golden evaluation dataset for the Smart Itinerary Planner & Booking Assistant (Phase 6, Task 6.1). Each scenario is a multi-stop travel request paired with the exact deterministic outputs of src/tools/* (weather, attractions, transit, booking are all hash-seeded / registry-driven with no network calls, so tool-level expectations below are exact and reproducible) plus the expected multi-agent routing, guardrail, and HITL behavior a compliant coordinator run should produce. evals/run_evals.py (Task 6.2) is expected to: (1) replay expected_tool_calls directly against src/tools/* and assert exact matches -- this measures 'tool success rate'; (2) assert the coordinator/specialist wiring in expected_routing matches src/agents/* factories -- this measures 'model routing accuracy'; (3) run guardrail assertions (src/guardrails/budget_guardrail.py, src/guardrails/hitl_manager.py) against expected_guardrails -- this measures 'budget adherence' and HITL compliance; (4) score end-to-end agent transcripts against success_criteria as a qualitative 'planning accuracy' rubric (LLM-as-judge or human review), since the coordinator's natural-language itinerary synthesis is not itself deterministic.",
+  "schema_notes": {
+    "sentinel_values": {
+      "<generated>": "Field is produced at runtime (e.g. a uuid4-derived booking id or confirmation token) and cannot be pinned in a golden file. Validate shape via the paired '*_pattern' regex instead of exact equality.",
+      "<any>": "Field value is intentionally unconstrained for this assertion."
+    },
+    "tool_call_shape": "Each expected_tool_calls[].expected mirrors the exact JSON produced by ToolResultEnvelope.model_dump_json() / ToolErrorEnvelope.model_dump_json() in src/tools/base.py -- {status:'success', data:{...}} or {status:'error', error_code, message, recovery_instruction}.",
+    "location_registry_note": "src/tools/weather_tool.py, attraction_tool.py, and transit_tool.py all key their local geocoding stand-in on the *exact lowercased free-text query string*, not on any parsed city/country pair. 'Paris', 'London', and 'Springfield' are the only three registry entries with more than one match and are therefore always LOCATION_AMBIGUOUS; every other registered city ('Tokyo', 'Rome', 'Barcelona', 'New York', 'San Francisco') always resolves cleanly."
+  },
+  "scenarios": [
+    {
+      "scenario_id": "barcelona_rome_multi_city",
+      "title": "Barcelona -> Rome relaxed city-hopping trip, within budget",
+      "tags": ["happy_path", "multi_stop", "budget_within", "tool_error_recovery", "hitl"],
+      "user_prompt": "Plan a relaxed 4-day trip: 2 nights in Barcelona then 2 nights in Rome, September 10-14, 2026. I like outdoor spots and history, budget-tier moderate, total budget $1800. Book a hotel in each city and figure out how I get from Barcelona to Rome.",
+      "trip": {
+        "stops": [
+          {"city": "Barcelona", "arrival_date": "2026-09-10", "departure_date": "2026-09-12"},
+          {"city": "Rome", "arrival_date": "2026-09-12", "departure_date": "2026-09-14"}
+        ],
+        "travelers": 1,
+        "budget_ceiling_usd": 1800.0,
+        "preferences": {"budget_tier": "moderate", "categories": ["outdoor", "history"], "pace": "relaxed"}
+      },
+      "expected_routing": [
+        {"step": 1, "delegate_to": "WeatherSpecialistAgent", "model": "gemini-3.5-flash", "rationale": "Fast forecast lookups for both cities before finalizing outdoor plans."},
+        {"step": 2, "delegate_to": "AttractionSearchAgent", "model": "gemini-3.5-flash", "rationale": "Search each city's catalog filtered by category/budget_tier/duration."},
+        {"step": 3, "delegate_to": "TravelCoordinatorAgent", "model": "gemini-3.1-pro", "rationale": "Coordinator owns calculate_transit_route_estimate directly for cross-stop routing."},
+        {"step": 4, "delegate_to": "BookingAgent", "model": "gemini-3.1-pro", "rationale": "Stage hotel reservations and gate confirmation on explicit HITL authorization."},
+        {"step": 5, "delegate_to": "TravelCoordinatorAgent", "model": "gemini-3.1-pro", "rationale": "Final multi-stop synthesis and budget/grounding guardrail pass."}
+      ],
+      "expected_tool_calls": [
+        {"step": 1, "tool": "fetch_destination_weather_forecast", "args": {"location": "Barcelona", "start_date": "2026-09-10", "end_date": "2026-09-11"}, "expected": {"status": "success", "data": {"resolved_location": "Barcelona, Spain", "daily_forecasts": [
+          {"forecast_date": "2026-09-10", "condition": "sunny", "temp_high_c": 31.0, "temp_low_c": 26.0, "precipitation_probability_pct": 41},
+          {"forecast_date": "2026-09-11", "condition": "sunny", "temp_high_c": 28.0, "temp_low_c": 23.0, "precipitation_probability_pct": 19}
+        ]}}},
+        {"step": 2, "tool": "fetch_destination_weather_forecast", "args": {"location": "Rome", "start_date": "2026-09-12", "end_date": "2026-09-13"}, "expected": {"status": "success", "data": {"resolved_location": "Rome, Italy", "daily_forecasts": [
+          {"forecast_date": "2026-09-12", "condition": "thunderstorms", "temp_high_c": 11.0, "temp_low_c": 1.0, "precipitation_probability_pct": 18},
+          {"forecast_date": "2026-09-13", "condition": "partly_cloudy", "temp_high_c": 24.0, "temp_low_c": 18.0, "precipitation_probability_pct": 71}
+        ]}}},
+        {"step": 3, "tool": "search_attractions_and_activities", "args": {"city": "Barcelona", "category": "outdoor", "budget_tier": "budget", "duration_hours": 2.0}, "expected": {"status": "success", "data": {"resolved_city": "Barcelona, Spain", "results": [
+          {"name": "Park Guell", "category": "outdoor", "price_tier": "budget", "typical_duration_hours": 1.5, "rating": 4.5, "opening_hours": "09:30-19:30 daily"}
+        ]}}},
+        {"step": 4, "tool": "search_attractions_and_activities", "args": {"city": "Rome", "category": "history", "budget_tier": "moderate", "duration_hours": 4.0}, "expected": {"status": "success", "data": {"resolved_city": "Rome, Italy", "results": [
+          {"name": "Colosseum & Roman Forum", "category": "history", "price_tier": "moderate", "typical_duration_hours": 3.5, "rating": 4.7, "opening_hours": "08:30-19:00 daily"}
+        ]}}},
+        {"step": 5, "tool": "calculate_transit_route_estimate", "args": {"origin": "Barcelona", "destination": "Rome", "travel_mode": "driving"}, "expected": {"status": "error", "error_code": "ROUTE_NOT_SUPPORTED", "message": "Route from 'Barcelona, Spain' to 'Rome, Italy' spans ~9457 km, which exceeds the realistic maximum for travel_mode='driving' (800 km).", "recovery_instruction": "Retry with travel_mode='flight' for long-distance routes."}, "note": "Deliberately naive first attempt -- the coordinator must recover by retrying with travel_mode='flight' per recovery_instruction, not give up or hallucinate a route."},
+        {"step": 6, "tool": "calculate_transit_route_estimate", "args": {"origin": "Barcelona", "destination": "Rome", "travel_mode": "flight"}, "expected": {"status": "success", "data": {"resolved_origin": "Barcelona, Spain", "resolved_destination": "Rome, Italy", "travel_mode": "flight", "distance_km": 9457.0, "estimated_duration_minutes": 829.3, "estimated_cost_usd": 1214.84}}},
+        {"step": 7, "tool": "stage_provisional_booking", "args": {"reservation_type": "hotel", "provider_id": "BCN-HTL-04", "slot": "2026-09-10 to 2026-09-12", "price": 220.00}, "expected": {"status": "success", "data": {"provisional_booking_id": "<generated>", "provisional_booking_id_pattern": "^book_[0-9a-f]{12}$", "reservation_type": "hotel", "provider_id": "BCN-HTL-04", "slot": "2026-09-10 to 2026-09-12", "price": 220.00, "status": "pending_confirmation", "confirmation_token": "<generated>", "confirmation_token_pattern": "^[0-9A-F]{8}$"}}},
+        {"step": 8, "tool": "stage_provisional_booking", "args": {"reservation_type": "hotel", "provider_id": "ROM-HTL-11", "slot": "2026-09-12 to 2026-09-14", "price": 260.00}, "expected": {"status": "success", "data": {"provisional_booking_id": "<generated>", "provisional_booking_id_pattern": "^book_[0-9a-f]{12}$", "reservation_type": "hotel", "provider_id": "ROM-HTL-11", "slot": "2026-09-12 to 2026-09-14", "price": 260.00, "status": "pending_confirmation", "confirmation_token": "<generated>", "confirmation_token_pattern": "^[0-9A-F]{8}$"}}},
+        {"step": 9, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "<from step 7>", "user_confirmation_token": "<from step 7>"}, "preconditions": {"traveler_authorized_booking_first": false}, "expected": {"status": "error", "error_code": "AUTHORIZATION_REQUIRED", "message_contains": "has not been explicitly authorized by the traveler in this conversation", "source": "before_confirm_booking_tool_callback in src/guardrails/hitl_manager.py, not the underlying booking_tool"}, "note": "Confirmation attempted before the traveler said yes -- must be blocked by the HITL gate even though the token is correct."},
+        {"step": 10, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "<from step 7>", "user_confirmation_token": "<from step 7>"}, "preconditions": {"traveler_authorized_booking_first": true, "authorized_via": "authorize_booking(state, provisional_booking_id_from_step_7)"}, "expected": {"status": "success", "data": {"provisional_booking_id": "<from step 7>", "reservation_type": "hotel", "provider_id": "BCN-HTL-04", "slot": "2026-09-10 to 2026-09-12", "price": 220.00, "status": "confirmed"}}},
+        {"step": 11, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "<from step 8>", "user_confirmation_token": "<from step 8>"}, "preconditions": {"traveler_authorized_booking_first": true, "authorized_via": "authorize_booking(state, provisional_booking_id_from_step_8)"}, "expected": {"status": "success", "data": {"provisional_booking_id": "<from step 8>", "reservation_type": "hotel", "provider_id": "ROM-HTL-11", "slot": "2026-09-12 to 2026-09-14", "price": 260.00, "status": "confirmed"}}}
+      ],
+      "expected_guardrails": {
+        "budget_check": {
+          "line_items_usd": [1214.84, 220.00, 260.00],
+          "budget_ceiling_usd": 1800.0,
+          "expected_status": "within_budget",
+          "expected_total_cost": 1694.84,
+          "expected_overage": 0.0
+        },
+        "hitl": {
+          "high_stakes_tool": "confirm_reservation_booking",
+          "requires_prior_authorize_booking_call": true,
+          "blocked_without_authorization": true
+        },
+        "grounding_check": {
+          "itinerary_items": ["Park Guell", "Colosseum & Roman Forum", "BCN-HTL-04", "ROM-HTL-11"],
+          "tool_output_items": ["Park Guell", "Colosseum & Roman Forum", "BCN-HTL-04", "ROM-HTL-11"],
+          "expected_verdict": "grounded"
+        }
+      },
+      "success_criteria": [
+        "Final itinerary lists Park Guell and Colosseum & Roman Forum with no invented attractions.",
+        "Transit leg is presented as a flight (not driving) after the ROUTE_NOT_SUPPORTED recovery.",
+        "Total estimated cost ($1694.84) is reported as within the $1800 budget.",
+        "Neither hotel is confirmed until the traveler explicitly authorizes it in conversation."
+      ]
+    },
+    {
+      "scenario_id": "tokyo_luxury_over_budget",
+      "title": "Tokyo luxury nightlife weekend that blows the stated budget",
+      "tags": ["edge_case", "budget_exceeded", "guardrail_halt"],
+      "user_prompt": "3 days in Tokyo, October 1-3 2026. I want the luxury nightlife scene -- Golden Gai bar hopping, nice hotel. My total budget is only $400 though.",
+      "trip": {
+        "stops": [{"city": "Tokyo", "arrival_date": "2026-10-01", "departure_date": "2026-10-03"}],
+        "travelers": 1,
+        "budget_ceiling_usd": 400.0,
+        "preferences": {"budget_tier": "luxury", "categories": ["nightlife"], "pace": "relaxed"}
+      },
+      "expected_routing": [
+        {"step": 1, "delegate_to": "WeatherSpecialistAgent", "model": "gemini-3.5-flash", "rationale": "Forecast check before finalizing plans."},
+        {"step": 2, "delegate_to": "AttractionSearchAgent", "model": "gemini-3.5-flash", "rationale": "Find nightlife options at the requested luxury tier."},
+        {"step": 3, "delegate_to": "BookingAgent", "model": "gemini-3.1-pro", "rationale": "Stage the hotel and activity cost so the coordinator can run the budget guardrail before proposing any confirmation."},
+        {"step": 4, "delegate_to": "TravelCoordinatorAgent", "model": "gemini-3.1-pro", "rationale": "Run evaluate_budget, detect the ceiling is exceeded, and halt before requesting booking authorization."}
+      ],
+      "expected_tool_calls": [
+        {"step": 1, "tool": "fetch_destination_weather_forecast", "args": {"location": "Tokyo", "start_date": "2026-10-01", "end_date": "2026-10-03"}, "expected": {"status": "success", "data": {"resolved_location": "Tokyo, Japan", "daily_forecasts": [
+          {"forecast_date": "2026-10-01", "condition": "sunny", "temp_high_c": 13.0, "temp_low_c": 8.0, "precipitation_probability_pct": 3},
+          {"forecast_date": "2026-10-02", "condition": "light_rain", "temp_high_c": 16.0, "temp_low_c": 8.0, "precipitation_probability_pct": 85},
+          {"forecast_date": "2026-10-03", "condition": "light_rain", "temp_high_c": 25.0, "temp_low_c": 17.0, "precipitation_probability_pct": 95}
+        ]}}},
+        {"step": 2, "tool": "search_attractions_and_activities", "args": {"city": "Tokyo", "category": "nightlife", "budget_tier": "luxury", "duration_hours": 3.0}, "expected": {"status": "success", "data": {"resolved_city": "Tokyo, Japan", "results": [
+          {"name": "Golden Gai Bar Hopping", "category": "nightlife", "price_tier": "luxury", "typical_duration_hours": 3.0, "rating": 4.2, "opening_hours": "20:00-04:00 daily"}
+        ]}}},
+        {"step": 3, "tool": "stage_provisional_booking", "args": {"reservation_type": "hotel", "provider_id": "TYO-HTL-09", "slot": "2026-10-01 to 2026-10-03", "price": 450.00}, "expected": {"status": "success", "data": {"provisional_booking_id": "<generated>", "provisional_booking_id_pattern": "^book_[0-9a-f]{12}$", "reservation_type": "hotel", "provider_id": "TYO-HTL-09", "slot": "2026-10-01 to 2026-10-03", "price": 450.00, "status": "pending_confirmation", "confirmation_token": "<generated>", "confirmation_token_pattern": "^[0-9A-F]{8}$"}}},
+        {"step": 4, "tool": "stage_provisional_booking", "args": {"reservation_type": "activity", "provider_id": "golden-gai-bar-crawl", "slot": "2026-10-02T20:00:00", "price": 90.00}, "expected": {"status": "success", "data": {"provisional_booking_id": "<generated>", "provisional_booking_id_pattern": "^book_[0-9a-f]{12}$", "reservation_type": "activity", "provider_id": "golden-gai-bar-crawl", "slot": "2026-10-02T20:00:00", "price": 90.00, "status": "pending_confirmation", "confirmation_token": "<generated>", "confirmation_token_pattern": "^[0-9A-F]{8}$"}}}
+      ],
+      "expected_guardrails": {
+        "budget_check": {
+          "line_items_usd": [450.00, 90.00],
+          "budget_ceiling_usd": 400.0,
+          "expected_status": "exceeded",
+          "expected_total_cost": 540.00,
+          "expected_overage": 140.00
+        },
+        "hitl": {
+          "high_stakes_tool": "confirm_reservation_booking",
+          "expected_calls_to_confirm_reservation_booking": 0,
+          "reason": "Non-negotiable budget rule in src/agents/constitution.py must halt the flow at the guardrail before the coordinator ever asks the traveler to authorize a confirmation."
+        }
+      },
+      "success_criteria": [
+        "Agent surfaces the $140.00 overage explicitly and by exact amount, not a vague 'this might be too expensive'.",
+        "Agent asks the traveler to either raise the budget ceiling or downgrade the hotel/activity, and does not proceed to request booking authorization.",
+        "confirm_reservation_booking is never invoked in this scenario."
+      ]
+    },
+    {
+      "scenario_id": "paris_ambiguous_multi_stop",
+      "title": "Paris -> Rome trip where 'Paris' is never disambiguated by the traveler",
+      "tags": ["edge_case", "location_ambiguous", "guided_error_handling", "known_limitation"],
+      "user_prompt": "I want to visit Paris then Rome next month, roughly 2 days each.",
+      "trip": {
+        "stops": [
+          {"city": "Paris", "arrival_date": "2026-09-10", "departure_date": "2026-09-11"},
+          {"city": "Rome", "arrival_date": "2026-09-12", "departure_date": "2026-09-13"}
+        ],
+        "travelers": 1,
+        "budget_ceiling_usd": null,
+        "preferences": {}
+      },
+      "expected_routing": [
+        {"step": 1, "delegate_to": "WeatherSpecialistAgent", "model": "gemini-3.5-flash", "rationale": "Attempt forecast lookup for the first stop."},
+        {"step": 2, "delegate_to": "TravelCoordinatorAgent", "model": "gemini-3.1-pro", "rationale": "Surface the LOCATION_AMBIGUOUS candidates to the traveler and pause planning for that stop rather than guessing."}
+      ],
+      "expected_tool_calls": [
+        {"step": 1, "tool": "fetch_destination_weather_forecast", "args": {"location": "Paris", "start_date": "2026-09-10", "end_date": "2026-09-11"}, "expected": {"status": "error", "error_code": "LOCATION_AMBIGUOUS", "message": "Multiple matches found for 'Paris': Paris, France, Paris, Texas, USA, Paris, Ontario, Canada.", "recovery_instruction": "Ask the user to specify the country/state, or retry with 'City, Country' format, e.g. 'Paris, France'."}},
+        {"step": 2, "tool": "search_attractions_and_activities", "args": {"city": "Paris", "category": null, "budget_tier": "moderate", "duration_hours": 3.0}, "expected": {"status": "error", "error_code": "LOCATION_AMBIGUOUS", "message": "Multiple matches found for 'Paris': Paris, France, Paris, Texas, USA, Paris, Ontario, Canada.", "recovery_instruction": "Ask the user to specify the country/state, or retry with 'City, Country' format, e.g. 'Paris, France'."}},
+        {"step": 3, "tool": "calculate_transit_route_estimate", "args": {"origin": "Paris", "destination": "Rome", "travel_mode": "flight"}, "expected": {"status": "error", "error_code": "LOCATION_AMBIGUOUS", "message": "Multiple matches found for origin='Paris': Paris, France, Paris, Texas, USA, Paris, Ontario, Canada.", "recovery_instruction": "Ask the user to specify the country/state for origin, or retry with 'City, Country' format, e.g. 'Paris, France'."}},
+        {"step": 4, "tool": "fetch_destination_weather_forecast", "args": {"location": "Paris, France", "start_date": "2026-09-10", "end_date": "2026-09-11"}, "expected": {"status": "error", "error_code": "LOCATION_NOT_FOUND", "message": "No location found matching 'Paris, France'.", "recovery_instruction": "Ask the user for a more specific or differently spelled destination."}, "note": "Confirms the known_limitation below: the tool's own suggested retry format does not actually resolve against the current registry."}
+      ],
+      "known_limitations": [
+        "src/tools/weather_tool.py, attraction_tool.py, and transit_tool.py resolve locations by exact-matching the full lowercased query string against _LOCATION_REGISTRY / _CITY_REGISTRY, whose only multi-match keys ('paris', 'london', 'springfield') are single bare words. Their own LOCATION_AMBIGUOUS recovery_instruction suggests retrying in 'City, Country' format (e.g. 'Paris, France'), but that string is not a registry key and step 4 above shows it returns LOCATION_NOT_FOUND instead of resolving. A compliant agent's only correct move today is to ask the traveler to pick a *different, unambiguous* city name, or the traveler must independently know to avoid 'Paris'/'London'/'Springfield' entirely -- true disambiguation is not currently achievable through the tool contract. This should be tracked as a backlog fix (e.g. registry keys on normalized 'city, country' strings) and evals/run_evals.py should flag this scenario as a known-broken retry path rather than a coordinator defect."
+      ],
+      "expected_guardrails": {
+        "grounding_check": {
+          "itinerary_items": [],
+          "tool_output_items": [],
+          "expected_verdict": "grounded"
+        }
+      },
+      "success_criteria": [
+        "Agent never guesses which 'Paris' the traveler means and never fabricates a resolved_location.",
+        "Agent relays all three candidate cities (France, Texas, Ontario) to the traveler verbatim.",
+        "Agent does not claim the ambiguity was resolved by retrying with 'City, Country' format, since that retry demonstrably fails against the current tool implementation."
+      ]
+    },
+    {
+      "scenario_id": "springfield_london_family_trip_error_recovery",
+      "title": "Springfield -> London -> New York family trip with several agent mis-steps to recover from",
+      "tags": ["edge_case", "location_ambiguous", "validation_error", "resource_not_found", "invalid_date_range", "multi_stop"],
+      "user_prompt": "Family trip: a couple days in Springfield, then London, then New York City. We like shopping and family-friendly stuff, budget tier moderate. Also give me New York weather for November 1-20.",
+      "trip": {
+        "stops": [
+          {"city": "Springfield", "arrival_date": "2026-07-01", "departure_date": "2026-07-02"},
+          {"city": "London", "arrival_date": "2026-07-03", "departure_date": "2026-07-04"},
+          {"city": "New York", "arrival_date": "2026-11-01", "departure_date": "2026-11-20"}
+        ],
+        "travelers": 3,
+        "budget_ceiling_usd": 2500.0,
+        "preferences": {"budget_tier": "moderate", "categories": ["shopping", "family"], "pace": "relaxed"}
+      },
+      "expected_routing": [
+        {"step": 1, "delegate_to": "WeatherSpecialistAgent", "model": "gemini-3.5-flash", "rationale": "Forecast lookups, including the intentionally-too-long New York window."},
+        {"step": 2, "delegate_to": "AttractionSearchAgent", "model": "gemini-3.5-flash", "rationale": "Search filters, including deliberately invalid ones the coordinator must correct before retrying."}
+      ],
+      "expected_tool_calls": [
+        {"step": 1, "tool": "fetch_destination_weather_forecast", "args": {"location": "Springfield", "start_date": "2026-07-01", "end_date": "2026-07-02"}, "expected": {"status": "error", "error_code": "LOCATION_AMBIGUOUS", "message": "Multiple matches found for 'Springfield': Springfield, Illinois, USA, Springfield, Missouri, USA, Springfield, Massachusetts, USA.", "recovery_instruction": "Ask the user to specify the country/state, or retry with 'City, Country' format, e.g. 'Paris, France'."}},
+        {"step": 2, "tool": "search_attractions_and_activities", "args": {"city": "London", "category": "shopping", "budget_tier": "moderate", "duration_hours": 2.0}, "expected": {"status": "error", "error_code": "LOCATION_AMBIGUOUS", "message": "Multiple matches found for 'London': London, United Kingdom, London, Ontario, Canada.", "recovery_instruction": "Ask the user to specify the country/state, or retry with 'City, Country' format, e.g. 'Paris, France'."}},
+        {"step": 3, "tool": "fetch_destination_weather_forecast", "args": {"location": "New York", "start_date": "2026-11-01", "end_date": "2026-11-20"}, "expected": {"status": "error", "error_code": "INVALID_DATE_RANGE", "message": "Requested range spans 20 days; forecasts are only available up to 14 days out.", "recovery_instruction": "Narrow the date range to 14 days or fewer, or tell the user long-range forecasts aren't available."}, "note": "Coordinator must narrow the window, not silently drop the weather check for New York."},
+        {"step": 4, "tool": "search_attractions_and_activities", "args": {"city": "New York", "category": "family", "budget_tier": "free", "duration_hours": 0.5}, "expected": {"status": "error", "error_code": "RESOURCE_NOT_FOUND", "message": "No attractions found in New York City, USA matching category='family', budget_tier='free', duration_hours=0.5.", "recovery_instruction": "Retry with a higher duration_hours, a higher budget_tier, or omit category to broaden the search."}, "note": "Deliberately narrow first attempt; coordinator should broaden budget_tier and/or duration_hours per the recovery_instruction."},
+        {"step": 5, "tool": "search_attractions_and_activities", "args": {"city": "New York", "category": "shopping", "budget_tier": "ultra", "duration_hours": 2.0}, "expected": {"status": "error", "error_code": "VALIDATION_ERROR", "message": "Unknown budget_tier 'ultra'. Valid values: ['budget', 'free', 'luxury', 'moderate'].", "recovery_instruction": "Retry with one of: ['budget', 'free', 'luxury', 'moderate']."}, "note": "'ultra' is a typo'd/hallucinated tier name -- exercises the VALIDATION_ERROR path so the coordinator must self-correct to a real tier, not ask the traveler to rephrase."},
+        {"step": 6, "tool": "search_attractions_and_activities", "args": {"city": "New York", "category": "shopping", "budget_tier": "luxury", "duration_hours": 2.5}, "expected": {"status": "success", "data": {"resolved_city": "New York City, USA", "results": [
+          {"name": "Fifth Avenue Shopping", "category": "shopping", "price_tier": "luxury", "typical_duration_hours": 2.5, "rating": 4.2, "opening_hours": "10:00-20:00 daily"}
+        ]}}, "note": "New York's catalog only has one 'shopping' entry and it is luxury-tier; the coordinator must broaden budget_tier to 'luxury' (and tell the traveler there's no cheaper shopping option in the catalog) rather than keep retrying 'moderate'."}
+      ],
+      "known_limitations": [
+        "Springfield and London ambiguity share the same unresolvable-retry limitation documented in the paris_ambiguous_multi_stop scenario; this scenario intentionally exercises it a second time against different registry entries for regression coverage."
+      ],
+      "expected_guardrails": {
+        "grounding_check": {
+          "itinerary_items": ["Fifth Avenue Shopping"],
+          "tool_output_items": ["Fifth Avenue Shopping"],
+          "expected_verdict": "grounded"
+        }
+      },
+      "success_criteria": [
+        "Agent asks the traveler to pick a specific Springfield and London before proposing itinerary items for those stops.",
+        "Agent narrows the New York weather window to 14 days or fewer instead of failing silently or fabricating a forecast.",
+        "Agent self-corrects the invalid budget_tier without asking the traveler to resend the request.",
+        "Final New York shopping recommendation is Fifth Avenue Shopping with an explicit note that it's the only (luxury-tier) shopping option in the catalog, not an invented budget-friendly alternative."
+      ]
+    },
+    {
+      "scenario_id": "sf_ny_weather_safety_and_token_mismatch",
+      "title": "New York -> San Francisco trip testing mandatory weather checks for outdoor activities and a mismatched confirmation token",
+      "tags": ["multi_stop", "weather_safety_rule", "hitl", "invalid_token", "tool_error_recovery"],
+      "user_prompt": "5 days: New York November 5-7, then San Francisco November 8-9, 2026. I want an outdoor walk in both cities plus one indoor backup, and book a hotel in each city. Total budget $2200.",
+      "trip": {
+        "stops": [
+          {"city": "New York", "arrival_date": "2026-11-05", "departure_date": "2026-11-07"},
+          {"city": "San Francisco", "arrival_date": "2026-11-08", "departure_date": "2026-11-09"}
+        ],
+        "travelers": 1,
+        "budget_ceiling_usd": 2200.0,
+        "preferences": {"budget_tier": "free", "categories": ["outdoor", "museum"], "pace": "moderate"}
+      },
+      "expected_routing": [
+        {"step": 1, "delegate_to": "WeatherSpecialistAgent", "model": "gemini-3.5-flash", "rationale": "Mandatory per constitution.py's non-negotiable rule: outdoor activities must be weather-checked before scheduling."},
+        {"step": 2, "delegate_to": "AttractionSearchAgent", "model": "gemini-3.5-flash", "rationale": "Find the outdoor activity plus an indoor fallback in each city."},
+        {"step": 3, "delegate_to": "TravelCoordinatorAgent", "model": "gemini-3.1-pro", "rationale": "Cross-reference forecasts against candidate dates and pick the lower-risk day for each outdoor activity."},
+        {"step": 4, "delegate_to": "BookingAgent", "model": "gemini-3.1-pro", "rationale": "Stage both hotels; gate confirmation on HITL."}
+      ],
+      "expected_tool_calls": [
+        {"step": 1, "tool": "fetch_destination_weather_forecast", "args": {"location": "New York", "start_date": "2026-11-05", "end_date": "2026-11-07"}, "expected": {"status": "success", "data": {"resolved_location": "New York City, USA", "daily_forecasts": [
+          {"forecast_date": "2026-11-05", "condition": "partly_cloudy", "temp_high_c": 28.0, "temp_low_c": 22.0, "precipitation_probability_pct": 16},
+          {"forecast_date": "2026-11-06", "condition": "thunderstorms", "temp_high_c": 12.0, "temp_low_c": 2.0, "precipitation_probability_pct": 3},
+          {"forecast_date": "2026-11-07", "condition": "sunny", "temp_high_c": 30.0, "temp_low_c": 25.0, "precipitation_probability_pct": 61}
+        ]}}},
+        {"step": 2, "tool": "fetch_destination_weather_forecast", "args": {"location": "San Francisco", "start_date": "2026-11-08", "end_date": "2026-11-09"}, "expected": {"status": "success", "data": {"resolved_location": "San Francisco, USA", "daily_forecasts": [
+          {"forecast_date": "2026-11-08", "condition": "cloudy", "temp_high_c": 33.0, "temp_low_c": 26.0, "precipitation_probability_pct": 87},
+          {"forecast_date": "2026-11-09", "condition": "sunny", "temp_high_c": 25.0, "temp_low_c": 20.0, "precipitation_probability_pct": 34}
+        ]}}},
+        {"step": 3, "tool": "search_attractions_and_activities", "args": {"city": "New York", "category": "outdoor", "budget_tier": "free", "duration_hours": 2.0}, "expected": {"status": "success", "data": {"resolved_city": "New York City, USA", "results": [
+          {"name": "Central Park Stroll", "category": "outdoor", "price_tier": "free", "typical_duration_hours": 1.5, "rating": 4.6, "opening_hours": "06:00-01:00 daily"}
+        ]}}},
+        {"step": 4, "tool": "search_attractions_and_activities", "args": {"city": "New York", "category": "museum", "budget_tier": "moderate", "duration_hours": 3.0}, "expected": {"status": "success", "data": {"resolved_city": "New York City, USA", "results": [
+          {"name": "Metropolitan Museum of Art", "category": "museum", "price_tier": "moderate", "typical_duration_hours": 3.0, "rating": 4.7, "opening_hours": "10:00-17:00, closed Wednesdays"}
+        ]}}, "note": "Indoor backup for the New York outdoor slot, in case the coordinator's preferred day still looks weather-risky."},
+        {"step": 5, "tool": "search_attractions_and_activities", "args": {"city": "San Francisco", "category": "outdoor", "budget_tier": "free", "duration_hours": 2.0}, "expected": {"status": "success", "data": {"resolved_city": "San Francisco, USA", "results": [
+          {"name": "Golden Gate Bridge Walk", "category": "outdoor", "price_tier": "free", "typical_duration_hours": 1.5, "rating": 4.7, "opening_hours": "Always open"}
+        ]}}},
+        {"step": 6, "tool": "calculate_transit_route_estimate", "args": {"origin": "New York", "destination": "San Francisco", "travel_mode": "driving"}, "expected": {"status": "error", "error_code": "ROUTE_NOT_SUPPORTED", "message": "Route from 'New York City, USA' to 'San Francisco, USA' spans ~11644 km, which exceeds the realistic maximum for travel_mode='driving' (800 km).", "recovery_instruction": "Retry with travel_mode='flight' for long-distance routes."}},
+        {"step": 7, "tool": "calculate_transit_route_estimate", "args": {"origin": "New York", "destination": "San Francisco", "travel_mode": "flight"}, "expected": {"status": "success", "data": {"resolved_origin": "New York City, USA", "resolved_destination": "San Francisco, USA", "travel_mode": "flight", "distance_km": 11644.0, "estimated_duration_minutes": 993.3, "estimated_cost_usd": 1477.28}}},
+        {"step": 8, "tool": "stage_provisional_booking", "args": {"reservation_type": "hotel", "provider_id": "NYC-HTL-22", "slot": "2026-11-05 to 2026-11-07", "price": 300.00}, "expected": {"status": "success", "data": {"provisional_booking_id": "<generated>", "provisional_booking_id_pattern": "^book_[0-9a-f]{12}$", "reservation_type": "hotel", "provider_id": "NYC-HTL-22", "slot": "2026-11-05 to 2026-11-07", "price": 300.00, "status": "pending_confirmation", "confirmation_token": "<generated>", "confirmation_token_pattern": "^[0-9A-F]{8}$"}}},
+        {"step": 9, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "<from step 8>", "user_confirmation_token": "WRONGTOK"}, "preconditions": {"traveler_authorized_booking_first": true, "authorized_via": "authorize_booking(state, provisional_booking_id_from_step_8)"}, "expected": {"status": "error", "error_code": "AUTHORIZATION_REQUIRED", "message_contains": "does not match the token issued for", "source": "confirm_reservation_booking in src/tools/booking_tool.py (past the HITL gate, which passed because the booking was authorized -- the token itself is simply wrong)"}, "note": "Distinguishes the HITL-layer AUTHORIZATION_REQUIRED (missing traveler consent) from the tool-layer AUTHORIZATION_REQUIRED (consent given, but wrong token supplied -- e.g. a typo or stale value)."},
+        {"step": 10, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "<from step 8>", "user_confirmation_token": "<from step 8>"}, "preconditions": {"traveler_authorized_booking_first": true}, "expected": {"status": "success", "data": {"provisional_booking_id": "<from step 8>", "reservation_type": "hotel", "provider_id": "NYC-HTL-22", "slot": "2026-11-05 to 2026-11-07", "price": 300.00, "status": "confirmed"}}}
+      ],
+      "expected_guardrails": {
+        "budget_check": {
+          "line_items_usd": [1477.28, 300.00, 250.00],
+          "budget_ceiling_usd": 2200.0,
+          "expected_status": "within_budget",
+          "expected_total_cost": 2027.28,
+          "expected_overage": 0.0,
+          "note": "The San Francisco hotel (SFO-HTL-06, $250.00) is staged and confirmed analogously to step 8-10; omitted above for brevity since it is not needed to exercise a new tool-error path."
+        },
+        "weather_safety_rule": {
+          "rule_source": "src/agents/constitution.py NON_NEGOTIABLE_RULES, 'mandatory weather checks for outdoor activities'",
+          "new_york_outdoor_activity": "Central Park Stroll",
+          "risk_ranked_days": ["2026-11-05 (partly_cloudy, 16% precip)", "2026-11-07 (sunny, 61% precip)", "2026-11-06 (thunderstorms, 3% precip)"],
+          "expected_scheduled_day": "2026-11-05",
+          "expected_behavior_if_scheduled_on_2026-11-06": "Agent must flag the 'thunderstorms' condition and either move the walk to 2026-11-05 or swap in the Metropolitan Museum of Art indoor backup for that day.",
+          "san_francisco_outdoor_activity": "Golden Gate Bridge Walk",
+          "expected_scheduled_day_sf": "2026-11-09",
+          "expected_behavior_if_scheduled_on_2026-11-08": "2026-11-08 carries 87% precipitation probability (highest of the trip); agent must not schedule the only outdoor activity on this day without an explicit weather caveat to the traveler."
+        },
+        "hitl": {
+          "high_stakes_tool": "confirm_reservation_booking",
+          "requires_prior_authorize_booking_call": true,
+          "wrong_token_after_authorization_still_fails": true
+        }
+      },
+      "success_criteria": [
+        "Central Park Stroll is scheduled on 2026-11-05, not 2026-11-06 (thunderstorms) -- or, if scheduled on 11-06, is paired with an explicit weather warning and the Met Museum offered as an alternative.",
+        "Golden Gate Bridge Walk is scheduled on 2026-11-09 (sunny) rather than 2026-11-08 (87% precipitation), or carries an explicit rain caveat if not.",
+        "Transit is presented as a flight after the driving attempt fails.",
+        "A wrong confirmation token is reported back to the traveler with a clear ask to re-share the correct code, not silently retried or treated as success."
+      ]
+    },
+    {
+      "scenario_id": "unauthorized_booking_attempt_tokyo_rome",
+      "title": "Tokyo -> Rome business trip stress-testing the HITL gate end to end",
+      "tags": ["multi_stop", "hitl", "guardrail_halt", "guided_error_handling"],
+      "user_prompt": "Business trip: Tokyo December 1-2, then Rome December 3-4, 2026. Book me a flight from Tokyo to Rome, $650 max for the flight.",
+      "trip": {
+        "stops": [
+          {"city": "Tokyo", "arrival_date": "2026-12-01", "departure_date": "2026-12-02"},
+          {"city": "Rome", "arrival_date": "2026-12-03", "departure_date": "2026-12-04"}
+        ],
+        "travelers": 1,
+        "budget_ceiling_usd": 650.0,
+        "preferences": {"budget_tier": "moderate", "categories": [], "pace": "brisk"}
+      },
+      "expected_routing": [
+        {"step": 1, "delegate_to": "WeatherSpecialistAgent", "model": "gemini-3.5-flash", "rationale": "Forecast check for both stops."},
+        {"step": 2, "delegate_to": "BookingAgent", "model": "gemini-3.1-pro", "rationale": "Stage the flight and enforce the HITL gate around confirm_reservation_booking via before_confirm_booking_tool_callback."}
+      ],
+      "expected_tool_calls": [
+        {"step": 1, "tool": "fetch_destination_weather_forecast", "args": {"location": "Tokyo", "start_date": "2026-12-01", "end_date": "2026-12-02"}, "expected": {"status": "success", "data": {"resolved_location": "Tokyo, Japan", "daily_forecasts": [
+          {"forecast_date": "2026-12-01", "condition": "thunderstorms", "temp_high_c": 10.0, "temp_low_c": 0.0, "precipitation_probability_pct": 91},
+          {"forecast_date": "2026-12-02", "condition": "thunderstorms", "temp_high_c": 12.0, "temp_low_c": 2.0, "precipitation_probability_pct": 45}
+        ]}}},
+        {"step": 2, "tool": "fetch_destination_weather_forecast", "args": {"location": "Rome", "start_date": "2026-12-03", "end_date": "2026-12-04"}, "expected": {"status": "success", "data": {"resolved_location": "Rome, Italy", "daily_forecasts": [
+          {"forecast_date": "2026-12-03", "condition": "light_rain", "temp_high_c": 19.0, "temp_low_c": 11.0, "precipitation_probability_pct": 22},
+          {"forecast_date": "2026-12-04", "condition": "rain", "temp_high_c": 25.0, "temp_low_c": 16.0, "precipitation_probability_pct": 22}
+        ]}}},
+        {"step": 3, "tool": "stage_provisional_booking", "args": {"reservation_type": "flight", "provider_id": "TYO-ROM-777", "slot": "2026-12-02T09:00:00", "price": 620.00}, "expected": {"status": "success", "data": {"provisional_booking_id": "<generated>", "provisional_booking_id_pattern": "^book_[0-9a-f]{12}$", "reservation_type": "flight", "provider_id": "TYO-ROM-777", "slot": "2026-12-02T09:00:00", "price": 620.00, "status": "pending_confirmation", "confirmation_token": "<generated>", "confirmation_token_pattern": "^[0-9A-F]{8}$"}}},
+        {"step": 4, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "<from step 3>", "user_confirmation_token": "<from step 3>"}, "preconditions": {"traveler_authorized_booking_first": false}, "expected": {"status": "error", "error_code": "AUTHORIZATION_REQUIRED", "source": "before_confirm_booking_tool_callback"}, "note": "Never let a correct token alone finalize a booking -- BookingAgent must not call this before the traveler has said yes, and the callback must block it if it tries anyway."},
+        {"step": 5, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "<from step 3>", "user_confirmation_token": "<from step 3>"}, "preconditions": {"traveler_authorized_booking_first": true, "authorized_via": "authorize_booking(state, provisional_booking_id_from_step_3)"}, "expected": {"status": "success", "data": {"provisional_booking_id": "<from step 3>", "reservation_type": "flight", "provider_id": "TYO-ROM-777", "slot": "2026-12-02T09:00:00", "price": 620.00, "status": "confirmed"}}},
+        {"step": 6, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "<from step 3>", "user_confirmation_token": "<from step 3>"}, "preconditions": {"traveler_authorized_booking_first": true}, "expected": {"status": "error", "error_code": "VALIDATION_ERROR", "message_contains": "has already been confirmed", "recovery_instruction": "No action needed; this booking was already finalized. Do not retry the confirmation."}, "note": "Idempotency/re-confirmation guard: repeating an already-confirmed booking must not double-charge or error opaquely."},
+        {"step": 7, "tool": "confirm_reservation_booking", "args": {"provisional_booking_id": "book_doesnotexist", "user_confirmation_token": "00000000"}, "expected": {"status": "error", "error_code": "RESOURCE_NOT_FOUND", "message": "No staged booking found for provisional_booking_id 'book_doesnotexist'.", "recovery_instruction": "Call stage_provisional_booking first, or double-check the provisional_booking_id for typos."}, "note": "Guards against confirming a hallucinated or stale booking id."}
+      ],
+      "expected_guardrails": {
+        "budget_check": {
+          "line_items_usd": [620.00],
+          "budget_ceiling_usd": 650.0,
+          "expected_status": "within_budget",
+          "expected_total_cost": 620.00,
+          "expected_overage": 0.0
+        },
+        "hitl": {
+          "high_stakes_tool": "confirm_reservation_booking",
+          "requires_prior_authorize_booking_call": true,
+          "blocked_without_authorization": true,
+          "double_confirmation_rejected": true,
+          "nonexistent_booking_id_rejected": true
+        }
+      },
+      "success_criteria": [
+        "The flight is only confirmed after an explicit, in-conversation traveler authorization is recorded via authorize_booking.",
+        "A second confirmation attempt on the same booking is rejected with a clear 'already confirmed' message, not treated as a fresh success.",
+        "An attempt to confirm a booking id that was never staged is rejected with RESOURCE_NOT_FOUND, not a crash or a fabricated confirmation."
+      ]
+    }
+  ]
+}
