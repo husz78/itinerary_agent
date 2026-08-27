@@ -43,13 +43,13 @@ This implementation plan breaks down the development of the travel agent into di
 ---
 
 ## Phase 4: Context & Persistent Local Memory Architecture (20 pts Rubric Alignment)
-- [ ] **Task 4.1: Persistent Local Session Store (SQLite)**
+- [x] **Task 4.1: Persistent Local Session Store (SQLite)**
   - Implement `src/memory/session_store.py` backed by SQLite (`data/travel_agent.db`) for multi-turn conversations and user profiles.
-- [ ] **Task 4.2: History Compaction & Summarization**
+- [x] **Task 4.2: History Compaction & Summarization**
   - Implement sliding window token management and automatic summarization (ADK compaction) in `src/memory/compaction.py`.
-- [ ] **Task 4.3: Asynchronous Memory Worker**
+- [x] **Task 4.3: Asynchronous Memory Worker**
   - Implement `src/memory/async_memory.py` using `asyncio.create_task` for background profile extraction and preference updates without blocking the UI.
-- [ ] **Task 4.4: Memory Unit Tests**
+- [x] **Task 4.4: Memory Unit Tests**
   - Add `tests/test_memory.py` verifying SQLite persistence, token windowing, and async extraction.
 
 ---
