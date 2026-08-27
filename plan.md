@@ -55,19 +55,19 @@ This implementation plan breaks down the development of the travel agent into di
 ---
 
 ## Phase 5: Multi-Agent Orchestration, Model Routing & Guardrails (20 pts Rubric Alignment)
-- [ ] **Task 5.1: Agent Constitution & Base Prompts**
+- [x] **Task 5.1: Agent Constitution & Base Prompts**
   - Define system prompts and domain constraints in `src/agents/constitution.py`.
-- [ ] **Task 5.2: Specialized Sub-Agents with Strategic Model Routing**
+- [x] **Task 5.2: Specialized Sub-Agents with Strategic Model Routing**
   - Implement `WeatherSpecialistAgent` (`gemini-3.5-flash`) in `src/agents/weather_specialist.py`.
   - Implement `AttractionSearchAgent` (`gemini-3.5-flash`) in `src/agents/attraction_search.py`.
   - Implement `BookingAgent` (`gemini-3.1-pro`) in `src/agents/booking_specialist.py`.
-- [ ] **Task 5.3: Travel Coordinator Agent**
+- [x] **Task 5.3: Travel Coordinator Agent**
   - Implement `TravelCoordinatorAgent` (`gemini-3.1-pro`) in `src/agents/coordinator.py` for complex multi-stop planning.
-- [ ] **Task 5.4: Human-in-the-Loop (HITL) Hooks**
+- [x] **Task 5.4: Human-in-the-Loop (HITL) Hooks**
   - Implement `src/guardrails/hitl_manager.py` gating final booking confirmation until the user explicitly authorizes.
-- [ ] **Task 5.5: Guardrails & Budget Policy Evaluator**
+- [x] **Task 5.5: Guardrails & Budget Policy Evaluator**
   - Implement `src/guardrails/budget_guardrail.py` and fast self-eval quality checks (`gemini-3.5-flash`).
-- [ ] **Task 5.6: Agent & Orchestration Tests**
+- [x] **Task 5.6: Agent & Orchestration Tests**
   - Add `tests/test_agents.py` and `tests/test_routing.py` testing multi-agent handoffs, model routing, and HITL stops.
 
 ---
