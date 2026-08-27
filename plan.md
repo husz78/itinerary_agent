@@ -75,9 +75,9 @@ This implementation plan breaks down the development of the travel agent into di
 ## Phase 6: Automated Evaluation Suite, CLI & Local Verification (15 pts Rubric Alignment)
 - [x] **Task 6.1: Golden Dataset Definition**
   - Create `evals/golden_dataset.json` containing 5+ multi-stop travel scenarios with complex constraints.
-- [ ] **Task 6.2: Regression & Benchmark Test Runner**
+- [x] **Task 6.2: Regression & Benchmark Test Runner**
   - Implement `evals/run_evals.py` measuring planning accuracy, budget adherence, model routing, and tool success rate.
-- [ ] **Task 6.3: Local CLI Entrypoint**
+- [x] **Task 6.3: Local CLI Entrypoint**
   - Implement `src/main.py` providing an interactive CLI experience for chatting with the agent.
 - [ ] **Task 6.4: Full Assessment Verification**
   - Run the full test suite and golden evals, ensuring 100% compliance across all 19 rubric criteria for final submission.

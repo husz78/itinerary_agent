@@ -9,6 +9,9 @@ data/*.db-wal
 # Local structured logs
 data/logs/
 
+# Generated eval run reports
+evals/results/
+
 # Python
 __pycache__/
 *.py[cod]
