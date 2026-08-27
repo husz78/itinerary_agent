@@ -1,0 +1,32 @@
+# Secrets
+.env
+
+# Local data / SQLite
+data/*.db
+data/*.db-journal
+data/*.db-wal
+
+# Local structured logs
+data/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+uv.lock.tmp
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+.claude/
