@@ -141,6 +141,19 @@ async def test_send_message_schedules_background_preference_extraction(store):
     assert "vegetarian" in preferences.dietary_restrictions
 
 
+async def test_send_message_sanitizes_input_before_persisting_and_running(store):
+    session, runner = await _make_session(
+        store, [[_text_event("TravelCoordinatorAgent", "Got it.")]]
+    )
+
+    await session.send_message("Book the hotel\x00\x07 for two nights")
+
+    turns = await store.get_turns("sess-1")
+    assert turns[0].content == "Book the hotel for two nights"
+    assert runner.calls[0][2] == "Book the hotel for two nights"
+    await session.aclose()
+
+
 async def test_reused_session_reuses_the_same_adk_session(store):
     session, runner = await _make_session(
         store,

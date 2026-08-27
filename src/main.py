@@ -47,6 +47,7 @@ from src.guardrails.hitl_manager import (
     CONFIRM_BOOKING_TOOL_NAME,
     authorize_booking,
 )
+from src.guardrails.input_sanitizer import sanitize_user_input
 from src.memory.async_memory import AsyncMemoryWorker
 from src.memory.compaction import compact_session_history
 from src.memory.session_store import ConversationTurn, SessionStore
@@ -158,6 +159,16 @@ class TravelAgentSession:
         """
         turn_id = uuid.uuid4().hex
         await self._ensure_adk_session()
+
+        sanitized = sanitize_user_input(text)
+        if sanitized.flagged:
+            self.logger.warning(
+                "INPUT_SANITIZATION_FLAGGED",
+                session_id=self.session_id,
+                turn_id=turn_id,
+                reasons=sanitized.reasons,
+            )
+        text = sanitized.sanitized_text
 
         user_turn = ConversationTurn(
             session_id=self.session_id, turn_id=turn_id, role="user", content=text
